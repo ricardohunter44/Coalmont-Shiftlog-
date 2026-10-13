@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Jobflow</title>
+<meta name="description" content="Field service job log: time-stamped notes, photos, files and links per job. Works offline.">
+<meta name="theme-color" content="#eceff2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Jobflow">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top"><div class="wrap" id="hdr"><div class="brand"><span class="lamp"></span>Jobflow</div></div></header>
+<main><div class="wrap" id="view"><p class="muted">Loading…</p></div></main>
+<nav class="nav"><div class="wrap">
+  <a href="#jobs" id="nav-jobs">Jobs</a>
+  <a href="#lists" id="nav-lists">Dropdowns</a>
+  <a href="#backup" id="nav-backup">Settings</a>
+</div></nav>
+
+<div class="overlay" id="viewer" hidden>
+  <div class="bar"><span class="grow mono" id="v-meta"></span>
+    <button class="btn small" data-act="vPrev" id="v-prev">Prev</button><button class="btn small" data-act="vNext" id="v-next">Next</button>
+    <button class="btn small" data-act="vSave">Save / Share</button>
+    <button class="btn small" data-act="vClose">Close</button></div>
+  <div class="ov-body" id="v-body"></div>
+  <div class="ov-cap" id="v-cap"></div>
+</div>
+<div class="sheet" id="sheet" hidden><div class="panel" id="sheet-panel"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="vendor/jszip.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
