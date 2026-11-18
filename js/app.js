@@ -1,7 +1,7 @@
 import * as DB from './db.js';
 import * as TC from './timecalc.js';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1343,6 +1343,7 @@ async function boot() {
       const flag = () => { updateReady = true; if (S.route === 'jobs' || S.route === 'backup') render(); };
       if (swReg.waiting && navigator.serviceWorker.controller) flag();
       swReg.addEventListener('updatefound', () => { const w = swReg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) flag(); }); });
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') swReg.update().catch(() => {}); }); // check for updates each time the app comes back on screen
       let reloaded = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
     } catch {}
