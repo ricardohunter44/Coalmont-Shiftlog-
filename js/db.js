@@ -1,7 +1,7 @@
 // Jobflow local database (IndexedDB). Everything lives on this device.
-// Stores: jobs, entries (log), files (metadata), blobs (file bytes + thumbnails), config.
+// Stores: jobs, entries (log), files (metadata), blobs (file bytes + thumbnails), config, time (hours).
 const NAME = 'jobflow';
-const VERSION = 1;
+const VERSION = 2;
 let dbp = null;
 
 export function openDB() {
@@ -15,22 +15,30 @@ export function openDB() {
       if (!d.objectStoreNames.contains('files')) d.createObjectStore('files', { keyPath: 'id' }).createIndex('jobId', 'jobId');
       if (!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs', { keyPath: 'id' });
       if (!d.objectStoreNames.contains('config')) d.createObjectStore('config', { keyPath: 'key' });
+      if (!d.objectStoreNames.contains('time')) d.createObjectStore('time', { keyPath: 'id' }).createIndex('date', 'date');
     };
     r.onsuccess = () => {
       const d = r.result;
       d.onversionchange = () => { d.close(); location.reload(); };
+      d.onclose = () => { dbp = null; }; // phone closed the connection (e.g. app was in the background): reopen next time
       resolve(d);
     };
-    r.onerror = () => reject(r.error);
+    r.onerror = () => { dbp = null; reject(r.error); };
     r.onblocked = () => reject(new Error('Jobflow is open in another tab. Close it and reload.'));
   });
   return dbp;
 }
 
-async function tx(stores, mode, fn) {
+async function tx(stores, mode, fn, retried) {
   const d = await openDB();
+  let t;
+  try { t = d.transaction(stores, mode); }
+  catch (e) {
+    if (retried || e.name !== 'InvalidStateError') throw e;
+    dbp = null; try { d.close(); } catch {}
+    return tx(stores, mode, fn, true); // connection was closed under us: reopen once and retry
+  }
   return new Promise((resolve, reject) => {
-    const t = d.transaction(stores, mode);
     let out;
     t.oncomplete = () => resolve(out);
     t.onerror = () => reject(t.error);

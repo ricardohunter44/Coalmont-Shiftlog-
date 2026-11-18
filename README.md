@@ -1,6 +1,6 @@
 # Jobflow
 
-Field service job log for your phone. Time-stamped notes, on-site time, photos, video and any file type (.ACD, .L5X, Word, Excel, PDF, ZIP, .MOV) per job. Installs to your home screen and works with no signal and no Claude.
+Field service job log and timesheet for your phone. Hours with travel/shop overtime, time-stamped notes, on-site time, photos, video and any file type (.ACD, .L5X, Word, Excel, PDF, ZIP, .MOV) per job. Installs to your home screen and works with no signal and no Claude.
 
 ## Where your data lives
 
@@ -31,6 +31,17 @@ The app needs to be hosted on an https address once so your phone can install it
 
 Open it once while you have signal. From then on it opens with no connection.
 
+## Time (hours)
+
+The **Time** tab tracks your hours.
+
+- **Clock in / Clock out:** pick the day type (Travel, Shop, Job site), tap **Clock in now**, and tap **Clock out** at the end of the day. Pick your lunch or break before clocking out; it's unpaid and comes out of regular time first.
+- **+ Add hours:** type in a day you forgot to clock, or one from the past. The box at the bottom shows regular and overtime before you save, and warns you if that date already has hours.
+- **Overtime:** time worked after the day type's cutoff counts as overtime. Travel days: after 3:00 PM. Shop days: after 5:00 PM. Job site starts with no cutoff. Set it, or add other day types, under **Day types & overtime** at the bottom of the Time tab. Changing a cutoff only affects hours entered after the change.
+- **Week view:** total, regular and overtime hours for the week, plus how many travel and shop days. Use ‹ › to go back through past weeks. Tap any entry to edit or delete it.
+- **Week summary** copies the week as text for a timesheet, text or email. **Save CSV** saves any date range as a spreadsheet.
+- Hours are included in backups.
+
 ## Job summaries and AI help
 
 Each job has a **Summary** button with three views:
@@ -49,12 +60,13 @@ The key stays on your phone and is not included in backups. AI only uses what yo
 
 ## Updating the app later
 
-When you change any file, also change `VERSION` at the top of `sw.js` (for example `jobflow-v1.0.1`) and redeploy. The app shows "A new version of Jobflow is ready" with an Update button. Your jobs are not affected by updates.
+When you change any file, also change `VERSION` at the top of `sw.js` (for example `jobflow-v1.2.1`) and redeploy. The app shows "A new version of Jobflow is ready" with an Update button. Your jobs are not affected by updates.
 
 ## Files
 
 - `index.html`, `css/app.css`, `js/app.js` — the app
 - `js/db.js` — on-device storage (IndexedDB)
+- `js/timecalc.js` — hours and overtime math
 - `sw.js` — offline support
 - `manifest.webmanifest`, `icons/` — home-screen install
 - `vendor/jszip.min.js` — builds backup and export .zip files

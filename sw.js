@@ -1,8 +1,8 @@
 // Jobflow service worker: keeps the app itself available offline.
 // Your data is in IndexedDB, not here. Bump VERSION whenever you deploy changes.
-const VERSION = 'jobflow-v1.1.0';
+const VERSION = 'jobflow-v1.2.0';
 const ASSETS = [
-  './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'js/app.js', 'js/db.js', 'vendor/jszip.min.js',
+  './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'js/app.js', 'js/db.js', 'js/timecalc.js', 'vendor/jszip.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png',
   'fonts/ibm-plex-sans-latin-400-normal.woff2', 'fonts/ibm-plex-sans-latin-500-normal.woff2', 'fonts/ibm-plex-sans-latin-600-normal.woff2',
   'fonts/ibm-plex-sans-condensed-latin-600-normal.woff2', 'fonts/ibm-plex-sans-condensed-latin-700-normal.woff2',

@@ -1,6 +1,7 @@
 import * as DB from './db.js';
+import * as TC from './timecalc.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,6 +30,7 @@ const DEFAULT_LISTS = {
 
 const S = {
   jobs: [], entries: [], files: [], lists: {}, settings: { photoMax: 3000 }, lastBackup: 0,
+  time: [], dayTypes: [], timeSet: { weekStart: 1, breakMin: 30, lastType: '' }, timeWeek: null, timeEditing: null,
   route: 'jobs', jobId: null, tab: 'log', filter: 'active', q: '',
   editing: null, editingFile: null, pending: [], pendingFor: null, viewer: null, busy: false,
   focus: null, restore: null, ready: false,
@@ -221,6 +223,7 @@ function route() {
   else if (h === 'new') S.route = 'new';
   else if (h === 'lists') S.route = 'lists';
   else if (h === 'backup') S.route = 'backup';
+  else if (h === 'time') S.route = 'time';
   else S.route = 'jobs';
   if (S.pendingFor !== S.jobId || S.route !== 'job') clearPending();
   S.editing = null; S.editingFile = null;
@@ -229,7 +232,8 @@ function route() {
 }
 function render() {
   if (!S.ready) return;
-  for (const k of ['jobs', 'lists', 'backup']) $('#nav-' + k).classList.toggle('on', S.route === k || (k === 'jobs' && ['job', 'new'].includes(S.route)));
+  for (const k of ['jobs', 'time', 'lists', 'backup']) $('#nav-' + k).classList.toggle('on', S.route === k || (k === 'jobs' && ['job', 'new'].includes(S.route)));
+  if (S.route === 'time') return renderTime();
   if (S.route === 'lists') return renderLists();
   if (S.route === 'backup') return renderBackup();
   if (S.route === 'new') return renderInfo(null);
@@ -244,14 +248,14 @@ function drawHdr(title, back) {
 
 /* ---------------- jobs + search ---------------- */
 function backupBanner() {
-  if (!S.jobs.length) return '';
+  if (!S.jobs.length && !S.time.length) return '';
   const days = S.lastBackup ? Math.floor((Date.now() - S.lastBackup) / 86400000) : null;
   if (days !== null && days < 7) return '';
-  return `<div class="banner"><span class="grow">${days === null ? 'Your jobs only live on this phone and haven’t been backed up yet.' : `Last backup was ${days} days ago.`}</span><a class="btn small" href="#backup">Back up</a></div>`;
+  return `<div class="banner"><span class="grow">${days === null ? 'Your jobs and hours only live on this phone and haven’t been backed up yet.' : `Last backup was ${days} days ago.`}</span><a class="btn small" href="#backup">Back up</a></div>`;
 }
 function renderJobs() {
   drawHdr('Jobflow');
-  $('#view').innerHTML = `<div class="stack">${backupBanner()}${updateBanner()}
+  $('#view').innerHTML = `<div class="stack">${backupBanner()}${updateBanner()}${clockBanner()}
     <div class="row"><input type="search" id="q" class="grow" placeholder="Search jobs, notes, equipment, files" value="${esc(S.q)}" enterkeyhint="search"><button class="btn primary" data-act="newJob">+ New job</button></div>
     <div id="below"></div></div>`;
   drawBelow();
@@ -508,9 +512,9 @@ async function renderBackup() {
   const total = S.files.reduce((s, f) => s + (f.size || 0), 0);
   $('#view').innerHTML = `<div class="stack">${updateBanner()}
     <section class="card stack">
-      <div><h2>Back up everything</h2><p class="muted" style="margin:6px 0 0;max-width:60ch">Your jobs live on this phone only. A backup is one .zip file with every job, note, photo and file in it. Save it to iCloud Drive, Google Drive, OneDrive or your laptop. If your phone is lost or replaced, restore it below.</p></div>
-      <dl class="kv"><dt>Last backup</dt><dd>${S.lastBackup ? esc(new Date(S.lastBackup).toLocaleString()) : 'Never'}</dd><dt>Jobs</dt><dd>${S.jobs.length}</dd><dt>Log entries</dt><dd>${S.entries.length}</dd><dt>Files</dt><dd>${S.files.length} · ${fmtSize(total)}</dd></dl>
-      <div class="row"><button class="btn primary" data-act="backupAll" ${S.jobs.length ? '' : 'disabled'}>Create backup file</button><span class="progress grow" id="b-prog"></span></div>
+      <div><h2>Back up everything</h2><p class="muted" style="margin:6px 0 0;max-width:60ch">Your jobs and hours live on this phone only. A backup is one .zip file with every job, note, photo, file and hours entry in it. Save it to iCloud Drive, Google Drive, OneDrive or your laptop. If your phone is lost or replaced, restore it below.</p></div>
+      <dl class="kv"><dt>Last backup</dt><dd>${S.lastBackup ? esc(new Date(S.lastBackup).toLocaleString()) : 'Never'}</dd><dt>Jobs</dt><dd>${S.jobs.length}</dd><dt>Log entries</dt><dd>${S.entries.length}</dd><dt>Hours entries</dt><dd>${S.time.length}</dd><dt>Files</dt><dd>${S.files.length} · ${fmtSize(total)}</dd></dl>
+      <div class="row"><button class="btn primary" data-act="backupAll" ${S.jobs.length || S.time.length ? '' : 'disabled'}>Create backup file</button><span class="progress grow" id="b-prog"></span></div>
     </section>
     <section class="card stack">
       <div><h2>Restore from a backup</h2><p class="muted" style="margin:6px 0 0;max-width:60ch">Adds the jobs from a Jobflow backup .zip to this phone. Jobs that are already here get updated to the backup's version. Nothing else is removed.</p></div>
@@ -544,7 +548,7 @@ async function drawStorage() {
 
 async function buildBackup(onProg) {
   const zip = new JSZip();
-  const meta = { app: 'jobflow', format: 1, version: APP_VERSION, exportedAt: Date.now(), jobs: S.jobs, entries: S.entries, files: S.files, lists: S.lists, settings: S.settings };
+  const meta = { app: 'jobflow', format: 1, version: APP_VERSION, exportedAt: Date.now(), jobs: S.jobs, entries: S.entries, files: S.files, lists: S.lists, settings: S.settings, time: S.time, dayTypes: S.dayTypes, timeSet: S.timeSet };
   zip.file('jobflow-backup.json', JSON.stringify(meta, null, 1));
   for (let i = 0; i < S.files.length; i++) {
     const f = S.files[i]; onProg && onProg(`Packing file ${i + 1} of ${S.files.length}…`);
@@ -567,7 +571,13 @@ async function applyBackup({ zip, meta }, onProg) {
   const ops = [];
   for (const j of meta.jobs || []) ops.push(['put', 'jobs', j]);
   for (const e of meta.entries || []) ops.push(['put', 'entries', e]);
+  for (const t of meta.time || []) ops.push(['put', 'time', t]);
   await DB.batch(ops);
+  if (Array.isArray(meta.dayTypes)) {
+    const merged = [...S.dayTypes];
+    for (const d of meta.dayTypes) if (d && d.name && !merged.some(x => x.name === d.name)) merged.push(d);
+    S.dayTypes = merged; await saveConfig('dayTypes', merged);
+  }
   const files = meta.files || [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i]; onProg && onProg(`Restoring file ${i + 1} of ${files.length}…`);
@@ -582,6 +592,162 @@ async function applyBackup({ zip, meta }, onProg) {
   for (const k of Object.keys(meta.lists || {})) { merged[k] = [...new Set([...(merged[k] || []), ...(meta.lists[k] || [])])]; }
   await saveLists(merged);
   await loadAll();
+}
+
+/* ---------------- time / hours ---------------- */
+const DEFAULT_DAY_TYPES = [{ name: 'Travel', ot: '15:00' }, { name: 'Shop', ot: '17:00' }, { name: 'Job site', ot: '' }];
+const BREAKS = [0, 15, 30, 45, 60, 90];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const dayTypeBy = n => S.dayTypes.find(d => d.name === n);
+const cutoffFor = n => (dayTypeBy(n) || {}).ot || '';
+function typeClass(n) { return /travel|drive/i.test(n || '') ? 'active' : /shop/i.test(n || '') ? 'wait' : /site|field/i.test(n || '') ? 'done' : ''; }
+const typePill = n => `<span class="pill ${typeClass(n)}">${esc(n || 'No type')}</span>`;
+function clock12(hhmm) { const m = TC.toMin(hhmm); if (m == null) return ''; const h = Math.floor(m / 60), mi = m % 60; return `${h % 12 || 12}:${TC.pad(mi)} ${h < 12 ? 'AM' : 'PM'}`; }
+const hrs = m => TC.fmtDec(m);
+const runningEntry = () => S.time.find(e => !e.end);
+const weekStart = () => S.timeWeek || TC.weekStartISO(todayISO(), S.timeSet.weekStart);
+const weekDays = ws => Array.from({ length: 7 }, (_, i) => TC.addDays(ws, i));
+const byStart = (a, b) => a.date.localeCompare(b.date) || (TC.toMin(a.start) ?? 0) - (TC.toMin(b.start) ?? 0);
+const entriesIn = (from, to) => S.time.filter(e => e.date >= from && e.date <= to).sort(byStart);
+const dayHead = iso => TC.parseISO(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+function rangeLabel(ws) {
+  const a = TC.parseISO(ws), b = TC.parseISO(TC.addDays(ws, 6));
+  const left = a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const right = b.toLocaleDateString(undefined, a.getMonth() === b.getMonth() ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
+  return `${left} – ${right}${b.getFullYear() !== new Date().getFullYear() ? ', ' + b.getFullYear() : ''}`;
+}
+function otHint(n) { const ot = cutoffFor(n); return ot ? `${esc(n)} day: overtime after ${clock12(ot)}.` : `No overtime cutoff set for ${esc(n || 'this day type')}. Set one under Day types & overtime below.`; }
+function breakOpts(v) { const list = BREAKS.includes(+v) ? BREAKS : [...BREAKS, +v].sort((a, b) => a - b); return list.map(b => `<option value="${b}"${+v === b ? ' selected' : ''}>${b ? b + ' min' : 'None'}</option>`).join(''); }
+function clockBanner() { const r = runningEntry(); if (!r) return ''; const c = TC.calcEntry(r); return `<div class="banner info"><span class="grow">On the clock · ${esc(r.dayType)} · since ${clock12(r.start)} · ${TC.fmtHM(c.total)}</span><a class="btn small" href="#time">Time</a></div>`; }
+
+function renderTime() {
+  drawHdr('Time');
+  $('#view').innerHTML = `<div class="stack">
+    <section class="card stack" id="t-clock" style="gap:12px"></section>
+    <div class="tbar"><button class="btn primary" data-act="tAdd">+ Add hours</button><button class="btn small" data-act="tWeekText">Week summary</button><button class="btn small" data-act="tCsvSheet">Save CSV</button></div>
+    <div class="weeknav"><button class="btn small" data-act="tWeek" data-d="-7" aria-label="Previous week">‹</button><b id="t-range" class="mono"></b><button class="btn small" data-act="tWeek" data-d="7" aria-label="Next week">›</button><button class="btn small ghost" data-act="tWeek" data-d="0" id="t-thisweek">This week</button></div>
+    <div id="t-week"></div>
+    <details class="card" id="t-settings"><summary><b>Day types & overtime</b></summary><div id="t-set-body" class="stack" style="gap:12px;margin-top:12px"></div></details>
+  </div>`;
+  drawTimeClock(); drawTimeWeek(); drawTimeSettings();
+}
+function drawTimeClock() {
+  const box = $('#t-clock'); if (!box || box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
+  const r = runningEntry();
+  if (r) {
+    const c = TC.calcEntry(r), job = r.jobId ? jobById(r.jobId) : null;
+    box.innerHTML = `<div class="row"><span class="onsite grow">On the clock</span>${typePill(r.dayType)}</div>
+      <div class="bigtime mono">${TC.fmtHM(c.total)}</div>
+      <div class="muted">Since ${clock12(r.start)}${r.date !== todayISO() ? ' on ' + esc(dayHead(r.date)) : ''}${r.otAt ? ` · overtime after ${clock12(r.otAt)}` : ''}${c.ot ? ` · <b class="otc">${TC.fmtHM(c.ot)} overtime so far</b>` : ''}${job ? ' · ' + esc(jobLabel(job)) : ''}</div>
+      <div class="row" style="align-items:flex-end"><label class="f" style="flex:1 1 150px">Lunch / break (unpaid)<select id="t-out-break">${breakOpts(r.breakMin ?? S.timeSet.breakMin)}</select></label><button class="btn primary" data-act="tClockOut">Clock out</button><button class="btn ghost" data-act="tEdit" data-id="${esc(r.id)}">Edit</button></div>`;
+  } else {
+    const sel = dayTypeBy(S.timeSet.lastType) ? S.timeSet.lastType : (S.dayTypes[0] || {}).name;
+    box.innerHTML = `<div class="row"><b class="grow">Not on the clock</b><span class="muted mono">${clock12(TC.nowHHMM())}</span></div>
+      <div class="seg wrapseg" id="t-in-type" role="radiogroup" aria-label="Day type">${S.dayTypes.map(d => `<button role="radio" aria-checked="${d.name === sel}" data-act="tPickType" data-v="${esc(d.name)}" class="${d.name === sel ? 'on' : ''}">${esc(d.name)}</button>`).join('')}</div>
+      <div class="muted" id="t-in-hint">${otHint(sel)}</div>
+      <button class="btn primary big" data-act="tClockIn">Clock in now</button>`;
+  }
+}
+function drawTimeWeek() {
+  const box = $('#t-week'); if (!box) return;
+  const ws = weekStart(), days = weekDays(ws), es = entriesIn(days[0], days[6]), s = TC.sumEntries(es), today = todayISO();
+  $('#t-range').textContent = rangeLabel(ws);
+  $('#t-thisweek').hidden = ws === TC.weekStartISO(today, S.timeSet.weekStart);
+  const typeLine = Object.entries(s.byType).map(([t, v]) => `${v.days.size} ${esc(t.toLowerCase())} day${v.days.size === 1 ? '' : 's'}`).join(' · ');
+  const stat = (label, m, cls = '') => `<div class="stat ${cls}"><span>${label}</span><b class="mono">${hrs(m)}</b><small class="mono">${TC.fmtHM(m)}</small></div>`;
+  const rows = days.map(d => {
+    const de = es.filter(e => e.date === d), ds = TC.sumEntries(de);
+    return `<section class="tday${d === today ? ' today' : ''}"><div class="tday-h"><b>${esc(dayHead(d))}</b>${d === today ? '<span class="tag">Today</span>' : ''}<span class="grow"></span>
+      ${de.length ? `<span class="mono">${hrs(ds.total)} h${ds.ot ? ` · <span class="otc">${hrs(ds.ot)} OT</span>` : ''}</span>` : `<button class="btn small ghost" data-act="tAdd" data-date="${d}">+ Add</button>`}</div>
+      ${de.map(tRow).join('')}</section>`;
+  }).join('');
+  box.innerHTML = `<div class="stack"><div class="stats">${stat('Total', s.total)}${stat('Regular', s.reg)}${stat('Overtime', s.ot, 'ot')}</div>
+    ${typeLine ? `<p class="muted" style="margin:0">${typeLine}</p>` : `<p class="muted" style="margin:0">No hours this week yet. Clock in when you start, or tap + Add hours to type them in.</p>`}
+    <div class="tdays">${rows}</div></div>`;
+}
+function tRow(e) {
+  const c = TC.calcEntry(e), job = e.jobId ? jobById(e.jobId) : null;
+  const extra = [job ? jobLabel(job) : '', e.note].filter(Boolean).join(' — ');
+  return `<button class="trow" data-act="tEdit" data-id="${esc(e.id)}">
+    <span class="trow-a">${typePill(e.dayType)}<span class="mono">${clock12(e.start)} – ${e.end ? clock12(e.end) : 'now'}</span></span>
+    <span class="trow-b mono">${hrs(c.reg)} reg${c.ot ? ` · <span class="otc">${hrs(c.ot)} OT</span>` : ''}${+e.breakMin && e.end ? ` · ${+e.breakMin}m break` : ''}</span>
+    ${extra ? `<span class="trow-c">${esc(extra)}</span>` : ''}</button>`;
+}
+function drawTimeSettings() {
+  const box = $('#t-set-body'); if (!box) return;
+  box.innerHTML = `<p class="muted" style="margin:0">Hours worked after a day type’s cutoff count as overtime. Changing a cutoff only affects hours you enter after the change.</p>
+    <div class="stack" style="gap:8px">${S.dayTypes.map((d, i) => `<div class="dtrow"><b class="grow">${esc(d.name)}</b><label class="dtot">OT after<input type="time" id="dt-ot-${i}" class="dt-ot" data-i="${i}" value="${esc(d.ot)}"></label>${S.dayTypes.length > 1 ? `<button class="btn small ghost danger" data-act="dtRm" data-i="${i}" aria-label="Remove ${esc(d.name)}">Remove</button>` : ''}</div>`).join('')}</div>
+    <div class="row"><input type="text" id="dt-new" placeholder="New day type, e.g. Standby" style="flex:1 1 160px"><input type="time" id="dt-new-ot" aria-label="Overtime starts after" style="flex:0 1 140px"><button class="btn small" data-act="dtAdd">Add</button></div>
+    <div class="fgrid"><label class="f">Week starts on<select id="t-wstart">${WEEKDAYS.map((n, i) => `<option value="${i}"${S.timeSet.weekStart === i ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label class="f">Usual lunch / break<select id="t-dbreak">${breakOpts(S.timeSet.breakMin)}</select></label></div>`;
+}
+
+function openTimeForm(id, date) {
+  const e = id ? S.time.find(x => x.id === id) : null;
+  S.timeEditing = e ? e.id : null;
+  const last = S.time.filter(x => x.end).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  const type = dayTypeBy(S.timeSet.lastType) ? S.timeSet.lastType : (S.dayTypes[0] || {}).name;
+  const v = e || { date: date || todayISO(), dayType: type, start: last ? last.start : '07:00', end: last ? last.end : '17:00', breakMin: S.timeSet.breakMin, jobId: '', note: '' };
+  const types = [...new Set([...S.dayTypes.map(d => d.name), v.dayType].filter(Boolean))];
+  const jobs = S.jobs.filter(j => !isClosed(j.status) || j.id === v.jobId).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const running = e && !e.end;
+  openSheet(`<form class="stack" data-act-submit="tSave" autocomplete="off">
+    <div class="row"><h2 class="grow">${e ? 'Edit hours' : 'Add hours'}</h2><button class="btn small" type="button" data-act="closeSheet">Close</button></div>
+    <div class="seg wrapseg" id="tf-type" role="radiogroup" aria-label="Day type">${types.map(n => `<button type="button" role="radio" aria-checked="${n === v.dayType}" data-act="tFormType" data-v="${esc(n)}" class="${n === v.dayType ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>
+    <input type="hidden" id="tf-daytype" value="${esc(v.dayType || '')}">
+    <div class="fgrid">
+      <label class="f full">Date<input type="date" id="tf-date" value="${esc(v.date)}"></label>
+      <label class="f">Start<input type="time" id="tf-start" value="${esc(v.start)}"></label>
+      <label class="f">End<input type="time" id="tf-end" value="${esc(v.end || '')}">${running ? '<span class="hint">Leave blank to stay on the clock.</span>' : ''}</label>
+      <label class="f">Lunch / break (unpaid)<select id="tf-break">${breakOpts(v.breakMin)}</select></label>
+      <label class="f">Job (optional)<select id="tf-job"><option value="">None</option>${jobs.map(j => `<option value="${esc(j.id)}"${j.id === v.jobId ? ' selected' : ''}>${esc(jobLabel(j))}</option>`).join('')}</select></label>
+      <label class="f full">Note (optional)<input type="text" id="tf-note" value="${esc(v.note || '')}" placeholder="e.g. Drove to site, picked up parts on the way"></label>
+    </div>
+    <div class="tprev" id="tf-prev" aria-live="polite"></div>
+    <div class="row"><button class="btn primary" type="submit">Save</button>${e ? `<span class="grow"></span><button class="btn danger" type="button" data-act="tDel" data-id="${esc(e.id)}">Delete</button>` : ''}</div>
+  </form>`);
+  drawTimePreview();
+}
+function formEntry() {
+  const g = id => (($('#' + id) || {}).value || '').trim();
+  const dayType = g('tf-daytype'), old = S.timeEditing ? S.time.find(x => x.id === S.timeEditing) : null;
+  const otAt = old && old.dayType === dayType ? (old.otAt ?? cutoffFor(dayType)) : cutoffFor(dayType);
+  return { date: g('tf-date'), dayType, start: g('tf-start'), end: g('tf-end'), breakMin: +g('tf-break') || 0, jobId: g('tf-job'), note: g('tf-note'), otAt };
+}
+function drawTimePreview() {
+  const box = $('#tf-prev'); if (!box) return;
+  const e = formEntry();
+  if (TC.toMin(e.start) == null) { box.innerHTML = '<span class="muted">Enter a start time.</span>'; return; }
+  if (!e.end && !(S.timeEditing && !(S.time.find(x => x.id === S.timeEditing) || {}).end)) { box.innerHTML = '<span class="muted">Enter an end time.</span>'; return; }
+  const c = TC.calcEntry(e), next = e.end && TC.toMin(e.end) <= TC.toMin(e.start) ? ' · ends next day' : '';
+  const others = S.time.filter(x => x.date === e.date && x.id !== S.timeEditing);
+  const dup = others.length ? `<br><span class="warnc">You already have ${hrs(TC.sumEntries(others).total)} h logged on this date. Check this isn’t a double entry.</span>` : '';
+  box.innerHTML = `<b class="mono">${hrs(c.total)} h</b> <span class="mono muted">(${TC.fmtHM(c.total)})</span>${next}<br><span class="mono">${hrs(c.reg)}</span> regular · <span class="mono otc">${hrs(c.ot)}</span> overtime<br><span class="muted">${e.otAt ? `${esc(e.dayType)}: overtime after ${clock12(e.otAt)}.` : `No overtime cutoff for ${esc(e.dayType || 'this entry')}.`}</span>${dup}`;
+}
+function redrawTime() { if (S.route === 'time') { drawTimeClock(); drawTimeWeek(); } }
+
+function weekText(ws) {
+  const days = weekDays(ws), es = entriesIn(days[0], days[6]), s = TC.sumEntries(es);
+  const L = [`Hours: ${dayHead(days[0])} – ${dayHead(days[6])}, ${TC.parseISO(days[6]).getFullYear()}`, ''];
+  if (!es.length) L.push('No hours logged.');
+  for (const e of es) {
+    const c = TC.calcEntry(e), job = e.jobId ? jobById(e.jobId) : null;
+    L.push(`${dayHead(e.date)} · ${e.dayType} · ${clock12(e.start)}–${e.end ? clock12(e.end) : 'now'}${+e.breakMin && e.end ? ` · ${e.breakMin} min break` : ''}`);
+    L.push(`   ${hrs(c.total)} h (${hrs(c.reg)} regular, ${hrs(c.ot)} OT)${job ? ' · ' + jobLabel(job) : ''}${e.note ? ' · ' + e.note : ''}`);
+  }
+  L.push('', `Total: ${hrs(s.total)} h`, `Regular: ${hrs(s.reg)} h`, `Overtime: ${hrs(s.ot)} h`);
+  const types = Object.entries(s.byType).map(([t, v]) => `${t} days: ${v.days.size}`);
+  if (types.length) L.push(types.join(' · '));
+  return L.join('\n');
+}
+function timeCsv(from, to) {
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['Date', 'Day', 'Day type', 'Start', 'End', 'Break (min)', 'Regular hours', 'Overtime hours', 'Total hours', 'OT starts after', 'Job #', 'Job title', 'Note']];
+  for (const e of entriesIn(from || '0000-00-00', to || '9999-99-99')) {
+    const c = TC.calcEntry(e), j = e.jobId ? jobById(e.jobId) : null;
+    rows.push([e.date, WEEKDAYS[TC.parseISO(e.date).getDay()], e.dayType, e.start, e.end || '(on the clock)', e.breakMin || 0, hrs(c.reg), hrs(c.ot), hrs(c.total), e.otAt || '', j ? j.number : '', j ? j.title : '', e.note]);
+  }
+  return rows.map(r => r.map(q).join(',')).join('\r\n');
 }
 
 /* ---------------- report & export ---------------- */
@@ -923,6 +1089,71 @@ const ACTS = {
     finally { S.ai = prev; b.disabled = false; b.textContent = 'Test'; }
   },
   async removeAi() { S.ai = { key: '', model: S.ai.model }; await saveConfig('ai', S.ai); toast('API key removed from this phone'); renderBackup(); },
+
+  /* time */
+  tPickType(b) { $$('#t-in-type button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); }); $('#t-in-hint').innerHTML = otHint(b.dataset.v); },
+  tFormType(b) { $$('#tf-type button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); }); $('#tf-daytype').value = b.dataset.v; drawTimePreview(); },
+  tAdd(b) { openTimeForm(null, b.dataset.date); },
+  tEdit(b) { openTimeForm(b.dataset.id); },
+  tWeek(b) { const d = +b.dataset.d; S.timeWeek = d ? TC.addDays(weekStart(), d) : null; drawTimeWeek(); },
+  async tClockIn() {
+    if (runningEntry()) { toast('You’re already on the clock.'); return; }
+    const on = $('#t-in-type .on'), dayType = on ? on.dataset.v : (S.dayTypes[0] || {}).name, now = new Date();
+    const rec = { id: uid(), date: TC.isoDate(now), dayType, start: TC.nowHHMM(now), end: '', breakMin: S.timeSet.breakMin, jobId: '', note: '', otAt: cutoffFor(dayType), createdAt: Date.now(), updatedAt: Date.now() };
+    try { await DB.put('time', rec); upsert(S.time, rec); S.timeSet.lastType = dayType; await saveConfig('timeSet', S.timeSet); S.timeWeek = null; redrawTime(); toast(`Clocked in at ${clock12(rec.start)} · ${dayType}`); }
+    catch { toast('Could not clock in. Try again.'); }
+  },
+  async tClockOut() {
+    const r = runningEntry(); if (!r) return;
+    const now = new Date(), end = TC.nowHHMM(now), b = +(($('#t-out-break') || {}).value) || 0;
+    const mins = Math.floor((now - TC.parseISO(r.date)) / 60000) - TC.toMin(r.start);
+    if (mins < 1) { toast('You clocked in less than a minute ago.'); return; }
+    if (mins >= 1440) { toast('The clock has run over 24 hours. Set the right end time.'); openTimeForm(r.id); return; }
+    const rec = { ...r, end, breakMin: b, updatedAt: Date.now() };
+    try {
+      await DB.put('time', rec); upsert(S.time, rec); S.timeSet.breakMin = b; await saveConfig('timeSet', S.timeSet);
+      const c = TC.calcEntry(rec); redrawTime(); toast(`Clocked out · ${hrs(c.total)} h${c.ot ? ` (${hrs(c.ot)} OT)` : ''}`);
+    } catch { toast('Could not clock out. Try again.'); }
+  },
+  async tDel(b) {
+    if (!armed(b)) return;
+    try { await DB.del('time', b.dataset.id); S.time = S.time.filter(x => x.id !== b.dataset.id); closeSheet(); redrawTime(); toast('Hours deleted'); }
+    catch { toast('Could not delete.'); }
+  },
+  tWeekText() {
+    const ws = weekStart();
+    openSheet(`<div class="row"><h2 class="grow">Week summary</h2><button class="btn small" data-act="closeSheet">Close</button></div>
+      <p class="muted" style="margin:0">Ready to paste into a text, email or your timesheet.</p>
+      <textarea id="report-text" readonly>${esc(weekText(ws))}</textarea>
+      <div class="row"><button class="btn primary" data-act="copyReport">Copy</button><button class="btn" data-act="tSaveText" data-ws="${ws}">Save / Share .txt</button></div>`);
+  },
+  tSaveText(b) { offerSave(new Blob([$('#report-text').value], { type: 'text/plain' }), `Hours week of ${b.dataset.ws}.txt`); },
+  tCsvSheet() {
+    const ws = weekStart(), t = new Date(), ms = TC.isoDate(new Date(t.getFullYear(), t.getMonth(), 1));
+    openSheet(`<div class="row"><h2 class="grow">Save hours as CSV</h2><button class="btn small" data-act="closeSheet">Close</button></div>
+      <p class="muted" style="margin:0">Opens in Excel, Numbers or Google Sheets. One row per entry with regular and overtime hours split out.</p>
+      <div class="fgrid"><label class="f">From<input type="date" id="csv-from" value="${ws}"></label><label class="f">To<input type="date" id="csv-to" value="${TC.addDays(ws, 6)}"></label></div>
+      <div class="row"><button class="btn small" data-act="tCsvRange" data-f="${ws}" data-t="${TC.addDays(ws, 6)}">This week</button><button class="btn small" data-act="tCsvRange" data-f="${ms}" data-t="${todayISO()}">This month</button><button class="btn small" data-act="tCsvRange" data-f="" data-t="">Everything</button></div>
+      <div class="row"><button class="btn primary" data-act="tCsvSave">Save / Share CSV</button></div>`);
+  },
+  tCsvRange(b) { $('#csv-from').value = b.dataset.f; $('#csv-to').value = b.dataset.t; },
+  tCsvSave() {
+    const f = $('#csv-from').value, t = $('#csv-to').value;
+    if (f && t && f > t) { toast('The From date is after the To date.'); return; }
+    const n = entriesIn(f || '0000-00-00', t || '9999-99-99').length;
+    if (!n) { toast('No hours in that date range.'); return; }
+    offerSave(new Blob([timeCsv(f, t)], { type: 'text/csv' }), `Hours ${f || 'all'}${t && f ? ' to ' + t : ''}.csv`);
+  },
+  async dtAdd() {
+    const name = $('#dt-new').value.trim(), ot = $('#dt-new-ot').value;
+    if (!name) { $('#dt-new').focus(); return; }
+    if (dayTypeBy(name) || S.dayTypes.some(d => d.name.toLowerCase() === name.toLowerCase())) { toast(`“${name}” is already a day type.`); return; }
+    S.dayTypes = [...S.dayTypes, { name, ot }]; await saveConfig('dayTypes', S.dayTypes); drawTimeSettings(); drawTimeClock(); toast(`Added ${name}`);
+  },
+  async dtRm(b) {
+    if (!armed(b)) return;
+    S.dayTypes = S.dayTypes.filter((_, i) => i !== +b.dataset.i); await saveConfig('dayTypes', S.dayTypes); drawTimeSettings(); drawTimeClock();
+  },
   copyReport() {
     const t = $('#report-text');
     const fallback = () => { t.focus(); t.select(); try { document.execCommand('copy'); toast('Report copied'); } catch { toast('Text selected. Use Copy from the menu.'); } };
@@ -976,6 +1207,22 @@ const ACTS = {
   async optUp(b) { const k = b.dataset.k, i = +b.dataset.i, a = list(k).slice(); [a[i - 1], a[i]] = [a[i], a[i - 1]]; const next = clone(S.lists); next[k] = a; await saveLists(next); drawLists(); },
 };
 const SUBMITS = {
+  async tSave() {
+    const e = formEntry(), old = S.timeEditing ? S.time.find(x => x.id === S.timeEditing) : null;
+    if (!e.date) { toast('Pick a date.'); return; }
+    if (!e.dayType) { toast('Pick a day type.'); return; }
+    if (TC.toMin(e.start) == null) { toast('Enter a start time.'); return; }
+    if (!e.end && !(old && !old.end)) { toast('Enter an end time.'); return; }
+    if (e.end && e.end === e.start) { toast('Start and end are the same time.'); return; }
+    const rec = { ...(old || { id: uid(), createdAt: Date.now() }), ...e, updatedAt: Date.now() };
+    try {
+      await DB.put('time', rec); upsert(S.time, rec);
+      S.timeSet.lastType = e.dayType; await saveConfig('timeSet', S.timeSet);
+      S.timeEditing = null; closeSheet();
+      S.timeWeek = TC.weekStartISO(e.date, S.timeSet.weekStart) === TC.weekStartISO(todayISO(), S.timeSet.weekStart) ? null : TC.weekStartISO(e.date, S.timeSet.weekStart);
+      redrawTime(); toast(old ? 'Hours updated' : `Saved ${hrs(TC.calcEntry(rec).total)} h`);
+    } catch { toast('Could not save the hours.'); }
+  },
   async saveInfo() {
     const d = readInfo();
     if (!d.title && !d.number) { toast('Give the job a number or a title.'); return; }
@@ -1012,6 +1259,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('input', e => {
   if (e.target.id === 'q') { S.q = e.target.value; drawBelow(); }
   if (e.target.id === 'c-text') saveDraft();
+  if (e.target.id && e.target.id.startsWith('tf-')) drawTimePreview();
 });
 document.addEventListener('change', async e => {
   const t = e.target;
@@ -1024,6 +1272,10 @@ document.addEventListener('change', async e => {
     return;
   }
   if (t.id === 'c-time') saveDraft();
+  if (t.id && t.id.startsWith('tf-')) drawTimePreview();
+  if (t.classList.contains('dt-ot')) { const i = +t.dataset.i; if (S.dayTypes[i]) { S.dayTypes[i] = { ...S.dayTypes[i], ot: t.value }; await saveConfig('dayTypes', S.dayTypes); drawTimeClock(); toast(t.value ? `${S.dayTypes[i].name}: overtime after ${clock12(t.value)}` : `${S.dayTypes[i].name}: no overtime cutoff`); } }
+  if (t.id === 't-wstart') { S.timeSet.weekStart = +t.value; S.timeWeek = null; await saveConfig('timeSet', S.timeSet); drawTimeWeek(); }
+  if (t.id === 't-dbreak') { S.timeSet.breakMin = +t.value; await saveConfig('timeSet', S.timeSet); toast('Usual break saved'); }
   if (t.id === 's-photo') { S.settings.photoMax = +t.value; await saveConfig('settings', S.settings); toast('Photo size saved'); }
   if (t.id === 'c-photo' || t.id === 'c-file') {
     for (const f of t.files) S.pending.push({ file: f, url: isImg(f) && !/heic|heif/i.test(f.type) ? URL.createObjectURL(f) : null });
@@ -1055,22 +1307,28 @@ document.addEventListener('change', async e => {
     try {
       S.restore = await readBackup(file); prog.textContent = '';
       const m = S.restore.meta;
-      openSheet(`<h2>Restore this backup?</h2><dl class="kv"><dt>Made</dt><dd>${esc(new Date(m.exportedAt).toLocaleString())}</dd><dt>Jobs</dt><dd>${(m.jobs || []).length}</dd><dt>Log entries</dt><dd>${(m.entries || []).length}</dd><dt>Files</dt><dd>${(m.files || []).length}</dd></dl>
-        <p class="muted" style="margin:0">Jobs in the backup are added to this phone. If a job is already here, the backup's version replaces it.</p>
+      openSheet(`<h2>Restore this backup?</h2><dl class="kv"><dt>Made</dt><dd>${esc(new Date(m.exportedAt).toLocaleString())}</dd><dt>Jobs</dt><dd>${(m.jobs || []).length}</dd><dt>Log entries</dt><dd>${(m.entries || []).length}</dd><dt>Files</dt><dd>${(m.files || []).length}</dd><dt>Hours entries</dt><dd>${(m.time || []).length}</dd></dl>
+        <p class="muted" style="margin:0">Jobs and hours in the backup are added to this phone. If one is already here, the backup's version replaces it.</p>
         <div class="row"><button class="btn primary" data-act="confirmRestore">Restore</button><button class="btn ghost" data-act="closeSheet">Cancel</button><span class="progress grow" id="rs-prog"></span></div>`);
     } catch (err) { prog.textContent = ''; toast(err.message || 'Could not read that file.'); }
   }
 });
 window.addEventListener('hashchange', route);
-setInterval(() => { if (S.route === 'job' && S.tab === 'log') drawClock(); }, 60000);
+setInterval(() => {
+  if (S.route === 'job' && S.tab === 'log') drawClock();
+  if (S.route === 'time') { drawTimeClock(); if (runningEntry()) drawTimeWeek(); }
+}, 30000);
 
 /* ---------------- boot ---------------- */
 async function loadAll() {
-  const [jobs, entries, files, cfg] = await Promise.all([DB.getAll('jobs'), DB.getAll('entries'), DB.getAll('files'), DB.getAll('config')]);
-  S.jobs = jobs; S.entries = entries; S.files = files;
+  const [jobs, entries, files, cfg, time] = await Promise.all([DB.getAll('jobs'), DB.getAll('entries'), DB.getAll('files'), DB.getAll('config'), DB.getAll('time')]);
+  S.jobs = jobs; S.entries = entries; S.files = files; S.time = time;
   const c = Object.fromEntries(cfg.map(x => [x.key, x.value]));
   S.lists = c.lists || null; S.settings = { photoMax: 3000, ...(c.settings || {}) }; S.lastBackup = c.lastBackup || 0;
   S.ai = { key: '', model: 'claude-sonnet-5-5', ...(c.ai || {}) };
+  S.timeSet = { weekStart: 1, breakMin: 30, lastType: '', ...(c.timeSet || {}) };
+  S.dayTypes = Array.isArray(c.dayTypes) && c.dayTypes.length ? c.dayTypes : null;
+  if (!S.dayTypes) { S.dayTypes = clone(DEFAULT_DAY_TYPES); await saveConfig('dayTypes', S.dayTypes); }
   if (!S.lists) { S.lists = clone(DEFAULT_LISTS); await saveConfig('lists', S.lists); }
   for (const k of Object.keys(DEFAULT_LISTS)) if (!Array.isArray(S.lists[k])) S.lists[k] = clone(DEFAULT_LISTS[k]);
 }
